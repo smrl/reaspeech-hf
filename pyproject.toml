@@ -43,6 +43,9 @@ celery = "^5.2.7"
 redis = "^4.5.4"
 ctranslate2 = "4.2.1"
 aiofiles = "^23.2.1"
+psutil = "^6.0.0"
+gputil = "^1.4.0"
+matplotlib = "^3.9.0"
 
 [tool.poetry.dev-dependencies]
 pytest = "^6.2.5"

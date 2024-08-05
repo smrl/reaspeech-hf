@@ -58,7 +58,6 @@ function ReaSpeechAPI:fetch_json(url_path, http_method, error_handler, success_h
       ' -s',
       ' -i',
       ' --http1.1',
-      ' --retry 5',
   })
   
   app:debug('Fetch JSON: ' .. command)

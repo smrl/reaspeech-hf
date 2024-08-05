@@ -28,7 +28,7 @@ import os
 import tempfile
 
 from celery.result import AsyncResult
-from fastapi import FastAPI, File, Query, Request, UploadFile, applications
+from fastapi import FastAPI, File, Query, Request, UploadFile, applications, HTTPException
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -38,6 +38,13 @@ import aiofiles
 
 from .util import apierror
 from .worker import transcribe
+
+import psutil
+import GPUtil
+from datetime import datetime
+from collections import deque
+import matplotlib.pyplot as plt
+import io
 
 logging.basicConfig(format='[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s', level=logging.INFO, force=True)
 logger = logging.getLogger(__name__)
@@ -63,10 +70,8 @@ LANGUAGE_CODES = sorted(list(tokenizer.LANGUAGES.keys()))
 TASK_EXPIRATION_SECONDS = 30
 
 projectMetadata = importlib.metadata.metadata('reaspeech')
-docs_url = os.getenv('ENABLE_SWAGGER_UI', '')
-
 app = FastAPI(
-    docs_url=docs_url or None,
+    # docs_url=None,
     # redoc_url=None,
     title=projectMetadata['Name'].title().replace('-', ' '),
     description=projectMetadata['Summary'],
@@ -120,7 +125,7 @@ async def index():
 
 @app.get("/reaspeech", response_class=HTMLResponse, include_in_schema=False)
 async def reaspeech(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request, "docs_url": docs_url})
+    return templates.TemplateResponse("index.html", {"request": request})
 
 @app.get("/reascript", response_class=PlainTextResponse, include_in_schema=False)
 async def reascript(request: Request, name: str, host: str, protocol: str):
@@ -211,3 +216,80 @@ async def revoke_job(job_id: str):
         "job_status": job.status
     }
     return JSONResponse(result)
+
+MAX_DATA_POINTS = 60
+data_store = deque(maxlen=MAX_DATA_POINTS)
+
+def get_current_stats():
+    cpu_percent = psutil.cpu_percent(interval=1)
+    memory = psutil.virtual_memory()
+    disk = psutil.disk_usage('/')
+    net_io = psutil.net_io_counters()
+    
+    gpu_info = []
+    try:
+        gpus = GPUtil.getGPUs()
+        for gpu in gpus:
+            gpu_info.append({
+                "id": gpu.id,
+                "name": gpu.name,
+                "load": gpu.load * 100,
+                "memory_used": gpu.memoryUsed,
+                "temperature": gpu.temperature
+            })
+    except:
+        gpu_info = "No GPU detected"
+
+    stats = {
+        "timestamp": datetime.now(),
+        "cpu_load": cpu_percent,
+        "memory_usage": memory.percent,
+        "disk_usage": disk.percent,
+        "network": {
+            "bytes_sent": net_io.bytes_sent,
+            "bytes_received": net_io.bytes_recv
+        },
+        "gpu_info": gpu_info
+    }
+
+    data_store.append(stats)
+    return stats
+
+@app.get("/server-stats", tags=["Monitoring"])
+async def get_server_stats():
+    try:
+        return get_current_stats()
+    except Exception as e:
+        logger.error(f"Error in get_server_stats: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.get("/stats-graph", tags=["Monitoring"])
+async def get_stats_graph():
+    try:
+        # Ensure we have at least one data point
+        if not data_store:
+            get_current_stats()
+
+        timestamps = [item['timestamp'] for item in data_store]
+        cpu_loads = [item['cpu_load'] for item in data_store]
+        memory_usages = [item['memory_usage'] for item in data_store]
+        disk_usages = [item['disk_usage'] for item in data_store]
+
+        plt.figure(figsize=(12, 6))
+        plt.plot(timestamps, cpu_loads, label='CPU Load')
+        plt.plot(timestamps, memory_usages, label='Memory Usage')
+        plt.plot(timestamps, disk_usages, label='Disk Usage')
+        plt.title('Server Stats Over the Last Hour')
+        plt.xlabel('Time')
+        plt.ylabel('Percentage')
+        plt.legend()
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        plt.close()  # Close the plot to free up memory
+        
+        return StreamingResponse(buf, media_type="image/png")
+    except Exception as e:
+        logger.error(f"Error in get_stats_graph: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")

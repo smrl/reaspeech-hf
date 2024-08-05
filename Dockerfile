@@ -1,24 +1,31 @@
 FROM swaggerapi/swagger-ui:v4.18.2 AS swagger-ui
-FROM python:3.10-slim
+FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ARG SERVICE_USER=service
-ARG SERVICE_UID=1001
-ARG SERVICE_GID=1001
+ARG SERVICE_UID=1000
+ARG SERVICE_GID=1000
 
+ENV PYTHON_VERSION=3.10
 ENV POETRY_VENV=/app/.venv
 
 RUN export DEBIAN_FRONTEND=noninteractive \
     && apt-get -qq update \
     && apt-get -qq install --no-install-recommends \
+    python${PYTHON_VERSION} \
+    python${PYTHON_VERSION}-venv \
+    python3-pip \
     lua5.3 \
     lua5.4 \
     lua-check \
     fswatch \
     make \
-    cargo \
     ffmpeg \
     redis \
     && rm -rf /var/lib/apt/lists/*
+
+RUN ln -s -f /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 && \
+    ln -s -f /usr/bin/python${PYTHON_VERSION} /usr/bin/python && \
+    ln -s -f /usr/bin/pip3 /usr/bin/pip
 
 RUN groupadd -g $SERVICE_GID $SERVICE_USER || true
 RUN useradd -u $SERVICE_UID -g $SERVICE_GID -d /app -s /usr/sbin/nologin $SERVICE_USER || true
@@ -38,13 +45,17 @@ RUN python3 -m venv $POETRY_VENV \
 
 ENV PATH="${PATH}:${POETRY_VENV}/bin"
 
+COPY --chown=$SERVICE_UID:$SERVICE_GID poetry.lock pyproject.toml ./
+
 RUN poetry config virtualenvs.in-project true
+RUN poetry install --no-root
+
 RUN poetry install && rm -rf /app/.cache/pypoetry
+RUN $POETRY_VENV/bin/pip install --no-cache-dir torch==1.13.1+cu117 -f https://download.pytorch.org/whl/torch
 
 WORKDIR /app/reascripts/ReaSpeech
 RUN make publish
 WORKDIR /app
-RUN rm -rf reascripts
 
 ENTRYPOINT ["python3", "app/run.py"]
 
