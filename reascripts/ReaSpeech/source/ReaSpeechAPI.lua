@@ -54,6 +54,7 @@ function ReaSpeechAPI:fetch_json(url_path, http_method, error_handler, timeout_h
     ' -m ', self.CURL_TIMEOUT_SECONDS,
     ' -s',
     ' -i',
+    ' --http1.1',
   })
 
   app:debug('Fetch JSON: ' .. command)
@@ -127,6 +128,7 @@ function ReaSpeechAPI:fetch_large(url_path, http_method)
     http_method_argument,
     ' -i ',
     ' -o "', output_file, '"',
+    ' --http1.1'
   })
 
   app:debug('Fetch large: ' .. command)
@@ -173,6 +175,7 @@ function ReaSpeechAPI:post_request(url_path, data, file_path)
     ' -F ', self:_maybe_quote('audio_file=@"' .. file_path .. '"'),
     ' -i ',
     ' -o "', output_file, '"',
+    ' --http1.1',
   })
 
   app:log(file_path)
