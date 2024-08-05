@@ -121,6 +121,31 @@ function ReaSpeechWorker:get_job_status(job_id)
   end)
 end
 
+function ReaSpeechWorker:get_job_status(job_id, retry_count)
+  retry_count = retry_count or 0
+  local max_retries = 5
+  local retry_delay = 1  * (2 ^ retry_count)  -- Exponential backoff
+
+  local url_path = "jobs/" .. job_id
+  ReaSpeechAPI:fetch_json(url_path, 'GET', function(error_message)
+      -- error callback
+      if error_message:match("500") and retry_count < max_retries then
+          app:debug("Got 500 error, retrying in " .. retry_delay .. " seconds. Retry " .. (retry_count + 1) .. " of " .. max_retries)
+          reaper.defer(function()
+              self:get_job_status(job_id, retry_count + 1)
+          end)
+      else
+          self:handle_error(self.active_job, error_message)
+          self.active_job = nil
+      end
+  end, function(response)
+      -- success callback
+      if self:handle_job_status(self.active_job, response) then
+          self.active_job = nil
+      end
+  end)
+end
+
 function ReaSpeechWorker:handle_request(request)
   app:log('Processing speech...')
   self.job_count = #request.jobs

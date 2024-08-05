@@ -32,74 +32,84 @@ end
 
 -- Fetch simple JSON responses. Will block until result or curl timeout.
 -- For large amounts of data, use fetch_large instead.
-function ReaSpeechAPI:fetch_json(url_path, http_method, error_handler, timeout_handler)
+function ReaSpeechAPI:fetch_json(url_path, http_method, error_handler, success_handler, timeout_handler, retry_count)
   http_method = http_method or 'GET'
   error_handler = error_handler or function(_msg) end
+  success_handler = success_handler or function(_response) end
   timeout_handler = timeout_handler or function() end
-
+  retry_count = retry_count or 0
+  local max_retries = 5
+  local retry_delay = 1 * (2 ^ retry_count) -- Exponential backoff
+  
   local curl = self:get_curl_cmd()
   local api_url = self:get_api_url(url_path)
-
+  
   local http_method_argument = ""
   if http_method ~= 'GET' then
-    http_method_argument = " -X " .. http_method
+      http_method_argument = " -X " .. http_method
   end
-
+  
   local command = table.concat({
-    curl,
-    ' "', api_url, '"',
-    ' --http1.1',
-    ' -H "accept: application/json"',
-    http_method_argument,
-    ' -m ', self.CURL_TIMEOUT_SECONDS,
-    ' -s',
-    ' -i',
-    ' --http1.1',
+      curl,
+      ' "', api_url, '"',
+      ' -H "accept: application/json"',
+      http_method_argument,
+      ' -m ', self.CURL_TIMEOUT_SECONDS,
+      ' -s',
+      ' -i',
+      ' --http1.1',
+      ' --retry 5',
   })
-
+  
   app:debug('Fetch JSON: ' .. command)
-
+  
   local exec_result = (ExecProcess.new { command }):wait()
-
+  
   if exec_result == nil then
-    local msg = "Unable to run curl"
-    app:log(msg)
-    error_handler(msg)
-    return nil
+      local msg = "Unable to run curl"
+      app:log(msg)
+      error_handler(msg)
+      return
   end
-
+  
   local status, output = exec_result:match("(%d+)\n(.*)")
   status = tonumber(status)
-
+  
   if status == 28 then
-    app:debug("Curl timeout reached")
-    timeout_handler()
-    return nil
+      app:debug("Curl timeout reached")
+      timeout_handler()
+      return
   elseif status ~= 0 then
-    local msg = "Curl failed with status " .. status
-    app:debug(msg)
-    error_handler(msg)
-    return nil
+      local msg = "Curl failed with status " .. status
+      app:debug(msg)
+      error_handler(msg)
+      return
   end
-
+  
   local response_status, response_body = self.http_status_and_body(output)
-
-  if response_status >= 400 then
-    local msg = "Request failed with status " .. response_status
-    app:log(msg)
-    error_handler(msg)
-    return nil
+  
+  if response_status >= 500 and retry_count < max_retries then
+      app:debug("Got 500 error, retrying in " .. retry_delay .. " seconds. Retry " .. (retry_count + 1) .. " of " .. max_retries)
+      reaper.defer(function()
+          self:fetch_json(url_path, http_method, error_handler, success_handler, timeout_handler, retry_count + 1)
+      end)
+      return
+  elseif response_status >= 400 then
+      local msg = "Request failed with status " .. response_status
+      app:log(msg)
+      error_handler(msg)
+      return
   end
-
+  
   local response_json = nil
   if app:trap(function()
-    response_json = json.decode(response_body)
+      response_json = json.decode(response_body)
   end) then
-    return response_json
+      success_handler(response_json)
   else
-    app:log("JSON parse error")
-    app:log(output)
-    return nil
+      app:log("JSON parse error")
+      app:log(output)
+      error_handler("JSON parse error")
   end
 end
 
