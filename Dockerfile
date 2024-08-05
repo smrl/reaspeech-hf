@@ -2,8 +2,8 @@ FROM swaggerapi/swagger-ui:v4.18.2 AS swagger-ui
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ARG SERVICE_USER=service
-ARG SERVICE_UID=1000
-ARG SERVICE_GID=1000
+ARG SERVICE_UID=1001
+ARG SERVICE_GID=1001
 
 ENV PYTHON_VERSION=3.10
 ENV POETRY_VENV=/app/.venv
